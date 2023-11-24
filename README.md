@@ -7,7 +7,7 @@ tags:
   - python
 ---
 
-# FastAPI Example
+# Gardensense FastAPI Deployment
 
 This example starts up a [FastAPI](https://fastapi.tiangolo.com/) server.
 
