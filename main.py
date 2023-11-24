@@ -1,258 +1,237 @@
-from fastapi import FastAPI, BackgroundTasks
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-import mysql.connector
-from datetime import datetime, timedelta
-import time
-from apscheduler.schedulers.background import BackgroundScheduler
-import requests
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, Text, View, Image } from 'react-native';
+import ModalDropdown from 'react-native-modal-dropdown';
+import { initializeApp } from 'firebase/app';
+import { getDatabase, ref, onValue } from 'firebase/database';
+import axios from 'axios';
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Esto permite solicitudes desde cualquier origen, pero deberías limitarlo a los dominios que necesitas.
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-# Configuración de la conexión a la base de datos
-conexion = mysql.connector.connect(
-    host="gardensense.cllvtomg7jyh.us-east-2.rds.amazonaws.com",
-    user="admin",
-    password="12345678", # Cambiar por la contraseña real
-    database="gardensense"
-)
+export default function App() {
+  // Estados para almacenar los valores de sensores y la planta seleccionada
+  const [humedad, setHumedad] = useState(0);
+  const [movimiento, setMovimiento] = useState(0);
+  const [temperatura, setTemperatura] = useState(0);
+  const [selectedPlant, setSelectedPlant] = useState('Tomate'); // Elige un valor predeterminado
+  const [plantDetails, setPlantDetails] = useState({});  // Nuevo estado para almacenar detalles de la planta
+  const [plantNames, setPlantNames] = useState([]);
 
-# Crear un cursor para ejecutar consultas SQL
-cursor = conexion.cursor()
+  const firebaseConfig = {
+    // Configuración de Firebase con las credenciales de tu proyecto
+    apiKey: "AIzaSyAt5_BrZyNPK2hoLvBXMDjeyAY9pOmNqsY",
+    authDomain: "gardensense-cfe37.firebaseapp.com",
+    databaseURL: "https://gardensense-cfe37-default-rtdb.firebaseio.com",
+    projectId: "gardensense-cfe37",
+    storageBucket: "gardensense-cfe37.appspot.com",
+    messagingSenderId: "949510113189",
+    appId: "1:949510113189:web:94c542b2d64df8fc2c4a4c",
+    measurementId: "G-0TR1T5V5ZP"
+  };
+  // Inicializa la aplicación de Firebase
+  const firebaseApp = initializeApp(firebaseConfig);
+  const db = getDatabase(firebaseApp);
+  const sensoresRef = ref(db, 'sensores');
 
-# Crear la tabla 'data_sensores' si aún no existe
-create_sensores_table_query = """
-CREATE TABLE IF NOT EXISTS data_sensores (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    humedad FLOAT,
-    movimiento INT,
-    temperatura FLOAT,
-    user VARCHAR(255),
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
+  useEffect(() => {
+    // Escucha cambios en la base de datos de Firebase y actualiza los estados
+    onValue(sensoresRef, (snapshot) => {
+      const data = snapshot.val();
+      setHumedad(data.humedad);
+      setMovimiento(data.movimiento);
+      setTemperatura(data.temperatura);
+    });
 
-cursor.execute(create_sensores_table_query)
-conexion.commit()
+    // Realizar la solicitud a la API al cargar la planta seleccionada
+    getPlantDetails(selectedPlant);
 
-# Crear la tabla 'data_plantas' si aún no existe
-create_plantas_table_query = """
-CREATE TABLE IF NOT EXISTS data_plantas (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    nombre VARCHAR(255),
-    mintemp INT,
-    maxtemp INT,
-    minhum INT,
-    maxhum INT
-);
-"""
+    // Realizar solicitud a la API para obtener nombres de plantas
+    fetch("https://fastapi-production-0454.up.railway.app/plantas/nombres")
+      .then(response => response.json())
+      .then(data => setPlantNames(data))
+      .catch(error => console.error("Error al obtener nombres de plantas:", error));
 
-cursor.execute(create_plantas_table_query)
-conexion.commit()
+  }, [selectedPlant]);  // Agrega selectedPlant como dependencia
 
-# Verificar si la tabla 'data_plantas' está vacía
-check_plantas_query = "SELECT COUNT(*) FROM data_plantas"
-cursor.execute(check_plantas_query)
-count = cursor.fetchone()[0]
+  const getPlantDetails = async (plantName) => {
+    try {
+      // Realizar una solicitud a la API para obtener detalles de la planta
+      const response = await axios.get(`https://fastapi-production-0454.up.railway.app/plantas/${plantName}`);
+      setPlantDetails(response.data);  // Actualizar el estado con los detalles de la planta
+    } catch (error) {
+      console.error('Error al obtener detalles de la planta:', error);
+    }
+  };
+ 
+  return (
+    <View style={styles.container}>
+      {/* Encabezado de la aplicación */}
+      <View style={styles.header}>
+        <Image source={require('./images/options.png')} style={styles.options} />
+        <View style={styles.home}>
+          <Text style={styles.headerText}>Home</Text>
+        </View>
+      </View>
 
-# Si la tabla está vacía, insertar datos iniciales
-if count == 0:
-    insert_inicial_plantas_query = """
-    INSERT INTO data_plantas (nombre, mintemp, maxtemp, minhum, maxhum) VALUES
-    ('Tomate', 20, 28, 60, 80),
-    ('Pimiento', 22, 30, 50, 70),
-    ('Zanahoria', 15, 25, 50, 70);
-    """
-    cursor.execute(insert_inicial_plantas_query)
-    conexion.commit()
+      <View style={styles.content}>
+        {/* Información de la planta seleccionada */}
+        <View style={styles.plantInfoContainer}>
+          <View style={styles.menuIconContainer}>
+            {/* Selector de planta desplegable */}
+            <ModalDropdown
+              options={plantNames}
+              initialScrollIndex={0}
+              onSelect={(index, value) => setSelectedPlant(value)}
+              dropdownStyle={styles.dropdown}
+            >
+              <Image source={require('./images/toggle.png')} style={styles.dropdownOptionImage} />
+            </ModalDropdown>
+          </View>
+          <View style={styles.plantName}>
+            <Text style={styles.Text}>{selectedPlant}</Text>
+          </View>
+        </View>
 
-# Función para insertar datos en la tabla 'data_sensores'
-def insert_sensor_data(humedad, movimiento, temperatura, user):
-    insert_data_query = """
-    INSERT INTO data_sensores (humedad, movimiento,temperatura,user) VALUES (%s, %s, %s, %s);
-    """
-    sensor_data = (humedad, movimiento, temperatura, user)
-    cursor.execute(insert_data_query, sensor_data)
-    conexion.commit()
+        {/* Contenedor de información de sensores */}
+        <View style={styles.rectangleContainer}>
+          {/* Línea de separación */}
+          <View style={styles.line}>
+            <View style={styles.lineBorder}></View>
+          </View>
 
-# Endpoint para obtener datos de los sensores
-@app.get("/sensores")
-async def get_sensor_data():
-    try:
-        # Ejecutar una consulta SQL para obtener los últimos datos de la tabla 'data_sensores'
-        query = "SELECT humedad, movimiento, temperatura, timestamp FROM data_sensores ORDER BY timestamp DESC LIMIT 1;"
-        cursor.execute(query)
-        result = cursor.fetchone()
+          {/* Muestra la humedad del sensor */}
+          <View style={styles.rectangle}>
+            <Text style={[
+              styles.rectangleText,
+              // Cambia el color y el mensaje basado en la humedad
+              humedad > plantDetails.maxhum
+                ? { color: 'navy' }
+                : humedad < plantDetails.minhum
+                ? { color: 'yellow' }
+                : null,
+            ]}>
+              {humedad > plantDetails.maxhum
+                ? 'Mucha agua'
+                : humedad < plantDetails.minhum
+                ? 'Falta regar'
+                : 'Regada'}
+            </Text>
+          </View>
 
-        if result:
-            # Extraer los valores de la consulta
-            humedad, movimiento, temperatura, timestamp = result
+          {/* Muestra el estado de movimiento del sensor */}
+          <View style={styles.rectangle}>
+            <Text style={[styles.rectangleText, movimiento === 1 ? { color: 'red' } : null]}>
+              {movimiento === 0 ? 'A salvo' : '¡Cuidado!'}
+            </Text>
+          </View>
 
-            # Formatear la respuesta
-            response_data = {
-                "humedad": humedad,
-                "movimiento": movimiento,
-                "temperatura": temperatura,
-                "timestamp": timestamp.isoformat() if timestamp else None
-            }
+          {/* Muestra la temperatura del sensor */}
+          <View style={styles.rectangle}>
+            <Text style={[styles.rectangleText, 
+                        temperatura > plantDetails.maxtemp ? { color: 'orange' } : (temperatura < plantDetails.mintemp ? { color: 'skyblue' } : null)]}>
+              {temperatura} °C
+            </Text>
+          </View>
+          
+        </View>
+      </View>
+    </View>
+  );
+}
 
-            return response_data
-        else:
-            return JSONResponse(content={"message": "No hay datos disponibles"}, status_code=404)
-    except Exception as e:
-        print(f"Error al obtener datos de los sensores: {str(e)}")
-        return JSONResponse(content={"message": "Error al obtener datos de los sensores"}, status_code=500)
-
-# Función para insertar datos en la tabla 'data_plantas'
-def insert_planta_data(nombre, mintemp, maxtemp, minhum, maxhum):
-    insert_planta_query = """
-    INSERT INTO data_plantas (nombre, mintemp, maxtemp, minhum, maxhum) VALUES (%s, %s, %s, %s, %s);
-    """
-    planta_data = (nombre, mintemp, maxtemp, minhum, maxhum)
-    cursor.execute(insert_planta_query, planta_data)
-    conexion.commit()
-
-# Endpoint para añadir una nueva planta
-@app.post("/plantas")
-async def add_planta(planta: dict):
-    try:
-        # Validar que se proporcionen todos los campos necesarios
-        required_fields = ["nombre", "mintemp", "maxtemp", "minhum", "maxhum"]
-        for field in required_fields:
-            if field not in planta:
-                return JSONResponse(content={"message": f"El campo '{field}' es obligatorio"}, status_code=400)
-
-        # Llamar a la función para insertar los datos de la nueva planta
-        insert_planta_data(planta["nombre"], planta["mintemp"], planta["maxtemp"], planta["minhum"], planta["maxhum"])
-        return JSONResponse(content={"message": "Nueva planta añadida correctamente"}, status_code=201)
-
-    except Exception as e:
-        print(f"Error al añadir nueva planta: {str(e)}")
-        return JSONResponse(content={"message": "Error al añadir nueva planta"}, status_code=500)
-
-# Endpoint para obtener datos de todas las plantas
-@app.get("/plantas")
-async def get_plantas():
-    try:
-        # Ejecutar una consulta SQL para obtener todos los datos de la tabla 'data_plantas'
-        query = "SELECT id, nombre, mintemp, maxtemp, minhum, maxhum FROM data_plantas;"
-        cursor.execute(query)
-        results = cursor.fetchall()
-
-        # Formatear la respuesta
-        plantas_data = [
-            {
-                "id": id,
-                "nombre": nombre,
-                "mintemp": mintemp,
-                "maxtemp": maxtemp,
-                "minhum": minhum,
-                "maxhum": maxhum,
-            }
-            for id, nombre, mintemp, maxtemp, minhum, maxhum in results
-        ]
-
-        return plantas_data
-    except Exception as e:
-        print(f"Error al obtener datos de las plantas: {str(e)}")
-        return JSONResponse(content={"message": "Error al obtener datos de las plantas"}, status_code=500)
-    
-
-# Endpoint para obtener nombres de todas las plantas
-@app.get("/plantas/nombres")
-async def get_nombres_plantas():
-    try:
-        # Ejecutar una consulta SQL para obtener los nombres de todas las plantas
-        query = "SELECT nombre FROM data_plantas;"
-        cursor.execute(query)
-        results = cursor.fetchall()
-
-        # Formatear la respuesta
-        nombres_plantas = [result[0] for result in results]
-        return nombres_plantas
-    except Exception as e:
-        print(f"Error al obtener nombres de las plantas: {str(e)}")
-        return JSONResponse(content={"message": "Error al obtener nombres de las plantas"}, status_code=500)
-
-# Endpoint para obtener detalles de una planta específica
-@app.get("/plantas/{nombre_planta}")
-async def get_planta_details(nombre_planta: str):
-    try:
-        # Ejecutar una consulta SQL para obtener los detalles de la planta específica
-        query = "SELECT id, nombre, mintemp, maxtemp, minhum, maxhum FROM data_plantas WHERE nombre = %s;"
-        cursor.execute(query, (nombre_planta,))
-        result = cursor.fetchone()
-
-        if result:
-            # Formatear la respuesta
-            planta_data = {
-                "id": result[0],
-                "nombre": result[1],
-                "mintemp": result[2],
-                "maxtemp": result[3],
-                "minhum": result[4],
-                "maxhum": result[5],
-            }
-            return planta_data
-        else:
-            return JSONResponse(content={"message": "Planta no encontrada"}, status_code=404)
-    except Exception as e:
-        print(f"Error al obtener detalles de la planta: {str(e)}")
-        return JSONResponse(content={"message": "Error al obtener detalles de la planta"}, status_code=500)
-
-# Función que se ejecutará cada 5 minutos para alimentar la base de datos
-def feed_database():
-    try:
-        # URL de tu base de datos en tiempo real de Firebase
-        firebase_url = "https://gardensense-cfe37-default-rtdb.firebaseio.com/sensores.json"
-    
-        # Realizar la solicitud GET a la base de datos de Firebase
-        response = requests.get(firebase_url)
-
-        # Verificar si la solicitud fue exitosa (código de respuesta 200)
-        if response.status_code == 200:
-            # Obtener los datos de la respuesta
-            firebase_data = response.json()
-
-            # Supongamos que los datos de Firebase tienen una estructura como esta:
-            humedad = firebase_data.get("humedad")
-            movimiento = firebase_data.get("movimiento")
-            temperatura = firebase_data.get("temperatura")
-            user = firebase_data.get("user")
-
-            # Llamar a la función para insertar los datos en la base de datos MySQL
-            insert_sensor_data(humedad, movimiento, temperatura, user)
-            print("Base de datos alimentada exitosamente.")
-        else:
-            print(f"Error al obtener datos de Firebase. Código de respuesta: {response.status_code}")
-
-    except Exception as e:
-        print(f"Error al alimentar la base de datos: {str(e)}")
-
-# Configuración de la tarea programada con APScheduler
-scheduler = BackgroundScheduler()
-scheduler.add_job(feed_database, 'interval', minutes=2)
-scheduler.start()
-
-# Función que se ejecuta al cerrar la aplicación
-def close_database_connection():
-    cursor.close()
-    conexion.close()
-
-# Configurar la función de cierre al cerrar la aplicación
-@app.on_event("shutdown")
-def shutdown_event():
-    close_database_connection()
-    scheduler.shutdown()
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#E4E4D0',
+  },
+  header: {
+    height: 90,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerText: {
+    fontSize: 30,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  home: {
+    paddingVertical: 27,
+    backgroundColor: "#94A684",
+    flex: 1,
+    alignItems: 'center',
+    borderBottomLeftRadius: 30,
+  },
+  options: {
+    marginTop: 10,
+    marginLeft: 20,
+    marginRight: 160,
+  },
+  pickerContainer: {
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1,
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rectangleContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rectangle: {
+    width: 300,
+    height: 100,
+    backgroundColor: '#B3A492',
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: 10,
+    borderRadius: 10,
+  },
+  rectangleText: {
+    fontSize: 30,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  line: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  lineBorder: {
+    flex: 1,
+    height: 2,
+    backgroundColor: '#94A684',
+  },
+  plantInfoContainer: {
+    flexDirection: 'row', // Esto establece la dirección de fila
+    alignItems: 'center', // Esto alinea los elementos verticalmente en el centro
+  },
+  // Estilos para el nombre de la planta
+  plantName: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  Text: {
+    fontSize: 30,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  // Estilos para el contenedor del menú del picker
+  menuIconContainer: {
+    paddingLeft: 10,
+  },
+  // Estilos para el menú desplegable
+  dropdownOptionImage: {
+    width: 30,
+    height: 35,
+  },
+  dropdown: {
+    width: 100,
+    height: 100,
+    borderColor: 'transparent',
+    borderWidth: 0,
+    borderRadius: 3,
+    backgroundColor: '#94A684',
+  },
+});
 
